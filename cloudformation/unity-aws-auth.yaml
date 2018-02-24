@@ -1,0 +1,315 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Unity3d - AWS Api Gateway Authentication Example"
+
+Parameters:
+
+  # --- Cognito User Pool ---
+  CognitoUserPoolName:
+    Description: "Cognito userpool name"
+    Type: String
+    Default: "my-user-pool"
+  CognitoUserPoolClientName:
+    Description: "Cognito userpool client name"
+    Type: String
+    Default: "my-user-pool-client"
+    MinLength: 1
+    MaxLength: 128
+  CognitoUserPoolCreateSampleUsers:
+    Description: "Should create sample users in cognito user pool?"
+    Type: Number
+    Default: 1
+
+  # --- Cognito Identity Pool
+  CognitoIdentityPoolName:
+    Description: "Name of Cognito Identity Pool"
+    Type: String
+    Default: "MyIdentityPool"
+    MinLength: 1
+    MaxLength: 128
+
+  # --- Api Gateway ---
+  ApiName:
+    Description: "REST Api Name"
+    Type: String
+    Default: "My REST Api"
+
+
+
+
+Resources:
+
+# =================================
+# Cognito - User Pool
+# =================================
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Ref CognitoUserPoolName
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 6
+          RequireLowercase: false
+          RequireNumbers: false
+          RequireSymbols: false
+          RequireUppercase: false
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+        ClientName: !Ref CognitoUserPoolClientName
+        ExplicitAuthFlows:
+          - "USER_PASSWORD_AUTH"
+        GenerateSecret: false
+        UserPoolId: !Ref CognitoUserPool
+
+  SampleUser1:
+    Type: AWS::Cognito::UserPoolUser
+    Properties:
+      Username: "sample_user_1"
+      UserPoolId: !Ref CognitoUserPool
+  SampleUser2:
+    Type: AWS::Cognito::UserPoolUser
+    Properties:
+      Username: "sample_user_2"
+      UserPoolId: !Ref CognitoUserPool
+
+  # =================================
+  # Lambda
+  # =================================
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  HelloWorldLambda:
+    # When creating the Api Gateway we'll attach lambda permission allowing the RestApi to invoke the lambda
+    # For the user, on the "Authenticated Role" of cognito we added the execute-api to allow the Api Gateway usage.
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: "gw-lambdas"
+        S3Key: "helloworld.zip"
+      Description: "Hello World Lambda"
+      Handler: "helloworld.handler"
+      MemorySize: 128
+      Runtime: "nodejs6.10"
+      Timeout: "5"
+      TracingConfig:
+        Mode: "PassThrough"
+      Role: !GetAtt LambdaExecutionRole.Arn
+
+  # =================================
+  # Api Gateway
+  # =================================
+
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Ref ApiName
+      BinaryMediaTypes:
+        - "application/json"
+      Description: "Example REST Api"
+
+  LambdaInvokePermission:
+    # Permissions for RestApi to invoke the lambda function
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt HelloWorldLambda.Arn
+      Action: 'lambda:InvokeFunction'
+      Principal: apigateway.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/prod/POST/api/*
+
+  ApiPathResource: # ApiPathResource so url will be: <api path>/api/...
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: "api"
+
+  HelloResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref ApiPathResource
+      PathPart: 'hello'
+
+  HelloMethod:
+    # Tutorial: https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-integrate-with-cognito.html
+    # See: https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-user-pool-authorizer-permissions.html
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref HelloResource
+      HttpMethod: POST
+      AuthorizationType: AWS_IAM
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${HelloWorldLambda.Arn}/invocations
+
+
+#  ProxyResource:
+#    Type: AWS::ApiGateway::Resource
+#    Properties:
+#      RestApiId: !Ref RestApi
+#      ParentId: !Ref ApiPathResource
+#      PathPart: '{proxy+}'
+#
+#  ProxyResourceANY:
+#    # Tutorial: https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-integrate-with-cognito.html
+#    # See: https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-user-pool-authorizer-permissions.html
+#    Type: AWS::ApiGateway::Method
+#    Properties:
+#      RestApiId: !Ref RestApi
+#      ResourceId: !Ref ProxyResource
+#      HttpMethod: ANY
+#      AuthorizationType: AWS_IAM
+#      Integration:
+#        Type: AWS_PROXY
+#        IntegrationHttpMethod: POST
+#        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${HelloWorldLambda.Arn}/invocations
+
+  RestApiDeployment:
+    DependsOn: "HelloMethod" # If Api Gateway methods and deployment are created in the same CF, need to depend on: See:https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-apigateway-deployment.html#aws-resource-apigateway-deployment-examples
+    Type: "AWS::ApiGateway::Deployment"
+    Properties:
+      RestApiId: !Ref RestApi
+      Description: "My deployment"
+
+  ProdStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      StageName: Prod
+      Description: Prod Stage
+      RestApiId: !Ref RestApi
+      DeploymentId: !Ref RestApiDeployment
+      Variables:
+        Stack: Prod
+      MethodSettings:
+        - ResourcePath: /api/hello
+          HttpMethod: POST
+          MetricsEnabled: 'true'
+          DataTraceEnabled: 'true'
+          ThrottlingBurstLimit: 50
+          ThrottlingRateLimit: 100
+
+  # =================================
+  # Cognito - Identity Pool
+  # =================================
+
+  CognitoIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Ref CognitoIdentityPoolName
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref CognitoUserPoolClient
+          ProviderName: !GetAtt CognitoUserPool.ProviderName
+
+  CognitoAuthenticatedRole:
+    # Role to allow the federated user to call execute-api Api Gateway methods
+    # Note: This role only allows to execute the Api Gateway methods, not anything related to the AWS services
+    #       since these are actual credentials which can be used by the AWS Cli... so limit only to the Api Gateway
+    # See: https://aws.amazon.com/blogs/compute/secure-api-access-with-amazon-cognito-federated-identities-amazon-cognito-user-pools-and-amazon-api-gateway/
+    # See: https://aws.amazon.com/blogs/mobile/understanding-amazon-cognito-authentication-part-3-roles-and-policies/
+    # Important: Notice that the resource is for stage 'prod'! for allowing devs to test other stages, change this.
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Federated: "cognito-identity.amazonaws.com"
+            Action:
+              - "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud": !Ref CognitoIdentityPool
+              "ForAnyValue:StringLike":
+                "cognito-identity.amazonaws.com:amr": authenticated
+      Policies:
+        - PolicyName: "CognitoAuthorizedPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "execute-api:Invoke"
+                Resource:
+                  - !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/prod/POST/api/*
+
+  CognitoUnauthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Federated: "cognito-identity.amazonaws.com"
+            Action:
+              - "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud": !Ref CognitoIdentityPool
+              "ForAnyValue:StringLike":
+                "cognito-identity.amazonaws.com:amr": unauthenticated
+      Policies:
+        - PolicyName: "CognitoUNauthorizedPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Deny"
+                Action: "*"
+                Resource: "*"
+
+Outputs:
+  CognitoUserPoolId:
+    Value: !Ref CognitoUserPool
+    Description: "Cognito userpool ID"
+  CognitoUserPoolIArn:
+    Value: !GetAtt CognitoUserPool.Arn
+    Description: "Cognito userpool ARN"
+  CognitoUserPoolIProviderURL:
+    Value: !GetAtt CognitoUserPool.ProviderURL
+    Description: "Cognito userpool provider URL"
+  CognitoUserPoolIProviderName:
+    Value: !GetAtt CognitoUserPool.ProviderName
+    Description: "Cognito userpool provider name"
+
+  CognitoUserPoolClientId:
+    Value: !Ref CognitoUserPoolClient
+    Description: "Cognito userpool client id"
+  CognitoUserPoolClientName:
+    Value: !GetAtt CognitoUserPoolClient.Name
+    Description: "Cognito userpool client name"
+
+  CognitoUserPoolUser1Id:
+    Value: !Ref SampleUser1
+    Description: "Userpool User 1 Id"
+  CognitoUserPoolUser2Id:
+    Value: !Ref SampleUser2
+    Description: "Userpool User 2 Id"
+

@@ -1,0 +1,125 @@
+#!/bin/bash
+
+
+# ======================================================================================================================
+# Read Parameters from env.json
+# ======================================================================================================================
+
+# $1 --> command
+# $2 --> env file (example: env.json or another (env.json is default)
+
+function help {
+    echo "usage: $0 <create or c|update or u|destroy or d|validate or v|copy or c> <environment json|noting>"
+}
+
+env_file="env.json"
+
+if [ "$#" -eq "2" ]
+then
+    env_file=$2
+fi
+
+function stack_name {
+    local val=$(cat $env_file | jq -r '.StackName')
+    printf ${val}
+}
+
+function template_file {
+    local val=$(cat $env_file | jq -r '.Template')
+    printf ${val}
+}
+
+function parameters_file {
+    local val=$(cat $env_file | jq -r '.Parameters')
+    printf ${val}
+}
+
+function stacks_bucket {
+    local val=$(cat $env_file | jq -r '.StacksBucket')
+    printf ${val}
+}
+
+function stacks_to_copy {
+    for stack_name in $(cat $env_file | jq -r '.StacksToCopy[]')
+    do
+        printf "${stack_name}\n"
+    done
+}
+
+function print_all {
+    echo "============================================================================================================="
+    echo "stack-name=$(stack_name)"
+    echo "template-file=$(template_file)"
+    echo "parameters-file=$(parameters_file)"
+    echo "stacks-bucket=$(stacks_bucket)"
+    echo "stacks-to-copy=$(stacks_to_copy)"
+    echo "============================================================================================================="
+}
+
+# ======================================================================================================================
+# Run Cloudformation Functions
+# ======================================================================================================================
+
+function run_cmd {
+    local cmd="$1"
+    echo "${cmd}"
+    eval "${cmd}"
+}
+function create {
+    run_cmd "aws cloudformation create-stack --stack-name $(stack_name) --template-body $(template_file) --parameters $(parameters_file)"
+}
+
+function update {
+    run_cmd "aws cloudformation update-stack --stack-name $(stack_name) --template-body $(template_file) --parameters $(parameters_file)"
+}
+
+function update_with_iam {
+    run_cmd "aws cloudformation update-stack --stack-name $(stack_name) --template-body $(template_file) --parameters $(parameters_file) --capabilities=CAPABILITY_IAM"
+}
+
+function destroy {
+    run_cmd "aws cloudformation delete-stack --stack-name $(stack_name)"
+}
+
+function validate {
+    run_cmd "aws cloudformation validate-template --template-body $(template_file)"
+}
+
+function copy_cloudformation_templates_to_bucket {
+    for stack in $(stacks_to_copy)
+    do
+        run_cmd "aws s3 cp ${stack} $(stacks_bucket) --sse"
+    done
+}
+# ======================================================================================================================
+# Main
+# ======================================================================================================================
+
+command=$1
+
+print_all
+case ${command} in
+"create"|"c")
+    create
+    ;;
+"update"|"u")
+    update
+    ;;
+"update-cap"|"uc")
+    update_with_iam
+    ;;
+"destroy"|"d")
+    destroy
+    ;;
+"validate"|"v")
+    validate
+    ;;
+"copy"|"cp")
+    copy_cloudformation_templates_to_bucket
+    ;;
+*)
+    help
+    ;;
+esac
+
+

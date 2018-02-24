@@ -1,0 +1,4 @@
+[
+	{"ParameterKey": "CognitoUserPoolName", "ParameterValue": "my-user-pool"},
+	{"ParameterKey": "CognitoUserPoolClientName", "ParameterValue": "my-user-pool-client-name"}
+]
