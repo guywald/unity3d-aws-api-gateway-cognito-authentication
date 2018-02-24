@@ -6,6 +6,6 @@ Work In Progress
 ---
 
 #### To do
-- [] Cloudformation yml (finish)
-- [] post cloudformation script
-- [] Unity3d project
+- [ ] Cloudformation yml (finish)
+- [ ] post cloudformation script
+- [ ] Unity3d project
