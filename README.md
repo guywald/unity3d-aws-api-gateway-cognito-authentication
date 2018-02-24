@@ -1,9 +1,11 @@
-# unity3d-aws-api-gateway-cognito-authentication
-
-### Description
-Unity3d - AWS authentication example with Api Gateway, Cognito Identity Federation
+# unity-aws-api-gateway-auth
+Unity and AWS Api Gateway Authentication Example
 
 ---
 Work In Progress
---
+---
 
+#### To do
+- [] Cloudformation yml (finish)
+- [] post cloudformation script
+- [] Unity3d project
